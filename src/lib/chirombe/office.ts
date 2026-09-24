@@ -8,32 +8,58 @@ export const LORDS_PRAYER =
 export const CHARGE =
   "Behold, I give unto you power to tread on serpents and scorpions, and over all the power of the enemy: and nothing shall by any means hurt you.";
 
-export type Prayer = { tradition: string; title: string; text: string };
+export type Prayer = { tradition: string; title: string; text: string; hz: number };
 
 export const PRAYERS: Prayer[] = [
-  { tradition: "Christian", title: "The Lord’s Prayer", text: LORDS_PRAYER },
+  { tradition: "Christian", title: "The Lord’s Prayer", hz: 432, text: LORDS_PRAYER },
   {
     tradition: "Jewish",
     title: "The Shema",
+    hz: 396,
     text: "Hear, O Israel: the Lord our God, the Lord is one. You shall love the Lord your God with all your heart, and with all your soul, and with all your might.",
   },
   {
     tradition: "Muslim",
     title: "The Opening, spoken in English",
-    text: "In the name of God, the Most Merciful, the Especially Merciful. Praise belongs to God, Lord of the worlds. The Most Merciful, the Especially Merciful, Master of the Day of Judgment. You alone we worship, and you alone we ask for help. Guide us on the straight path.",
+    hz: 528,
+    text: "In the name of God, the Most Merciful, the Especially Merciful. Praise belongs to God, Lord of the worlds. You alone we worship, and you alone we ask for help. Guide us on the straight path.",
   },
   {
     tradition: "Buddhist",
     title: "Loving-kindness",
-    text: "May all beings be safe. May all beings be well. May all beings be at ease. May this house be held in kindness.",
+    hz: 174,
+    text: "May all beings be safe. May all beings be well. May all beings be at ease.",
   },
   {
     tradition: "Hindu",
     title: "The peace leading",
+    hz: 285,
     text: "Lead us from the unreal to the real. Lead us from darkness to light. Lead us from death to immortality. Peace. Peace. Peace.",
   },
-  { tradition: "The house", title: "The charge", text: CHARGE },
+  {
+    tradition: "Sikh",
+    title: "One Creator",
+    hz: 639,
+    text: "One Creator. Truth by name. The doer in all. Without fear. Without hate. A timeless figure. Beyond birth. Self existent.",
+  },
+  {
+    tradition: "Bahá’í",
+    title: "Blessed is the spot",
+    hz: 417,
+    text: "Blessed is the spot, and the house, and the place, and the city, and the heart where mention of God hath been made.",
+  },
+  { tradition: "Zoroastrian", title: "Good thoughts", hz: 256, text: "Good thoughts. Good words. Good deeds." },
+  {
+    tradition: "Taoist",
+    title: "The soft way",
+    hz: 341,
+    text: "The soft overcomes the hard. The still overcomes the restless. What is empty is used.",
+  },
+  { tradition: "The house", title: "The charge", hz: 108, text: CHARGE },
 ];
+
+const VERBS = ["keep", "cover", "steady", "remember", "gather", "light", "hold", "restore"];
+export const CHOIR = 48;
 
 export type OfficeState = {
   wanted: boolean;
@@ -45,12 +71,17 @@ export type OfficeState = {
   tradition: string;
   title: string;
   line: string;
+  generation: number;
+  carrier: number;
+  voices: number;
 };
 
-const KEY = "chirombe.office.v1";
-const TONES = [108, 174, 285, 432, 528];
-
+const KEY = "chirombe.office.v2";
 const listeners = new Set<() => void>();
+let memory: string[] = [];
+let evolvedFor = 0;
+let writtenGeneration = 1;
+
 let wanted = true;
 let live = false;
 let recitation = 1;
@@ -59,7 +90,7 @@ let spoken = false;
 let audioCtx: AudioContext | null = null;
 let master: GainNode | null = null;
 let analyser: AnalyserNode | null = null;
-let nodes: OscillatorNode[] = [];
+let nodes: AudioScheduledSourceNode[] = [];
 let pulse = 0;
 let keeper = 0;
 let opening: Promise<boolean> | null = null;
@@ -67,7 +98,11 @@ let booted = false;
 let fallback = 0;
 let generation = 0;
 let sounding = false;
-const bins = new Uint8Array(64);
+type ChoirVoice = { osc: OscillatorNode; ratio: number; detune: number };
+let choir: ChoirVoice[] = [];
+let murmur: BiquadFilterNode | null = null;
+let timeBins = new Uint8Array(2048);
+let freqBins = new Uint8Array(1024);
 
 const EMPTY: OfficeState = {
   wanted: true,
@@ -79,6 +114,9 @@ const EMPTY: OfficeState = {
   tradition: PRAYERS[0].tradition,
   title: PRAYERS[0].title,
   line: PRAYERS[0].text,
+  generation: 1,
+  carrier: PRAYERS[0].hz,
+  voices: CHOIR,
 };
 
 let snapshot: OfficeState = EMPTY;
@@ -91,8 +129,27 @@ function prayerAt(n: number): Prayer {
   return PRAYERS[(Math.max(1, n) - 1) % PRAYERS.length];
 }
 
+function evolve(n: number): Prayer {
+  const seed = prayerAt(n);
+  const mark = `Generation ${n}.`;
+  const kept = [...memory].reverse().find((item) => item.startsWith(mark));
+  if (kept) {
+    evolvedFor = n;
+    writtenGeneration = n;
+    return { ...seed, text: kept };
+  }
+  const inherited = memory.length > 0 ? memory[memory.length - 1].split(/\s+/).slice(-8).join(" ") : "the peace already spoken";
+  const verb = VERBS[(n + memory.length) % VERBS.length];
+  const text = `${mark} For ${coveredName(n)}, ${verb} what was carried forward: ${inherited}. ${seed.text}`;
+  memory.push(text);
+  if (memory.length > 24) memory.shift();
+  evolvedFor = n;
+  writtenGeneration = n;
+  return { ...seed, text };
+}
+
 function project(): OfficeState {
-  const prayer = prayerAt(recitation);
+  const prayer = evolve(recitation);
   return {
     wanted,
     live,
@@ -103,6 +160,9 @@ function project(): OfficeState {
     tradition: prayer.tradition,
     title: prayer.title,
     line: prayer.text,
+    generation: writtenGeneration,
+    carrier: prayer.hz,
+    voices: choir.length || CHOIR,
   };
 }
 
@@ -115,9 +175,11 @@ function load(): void {
   try {
     const raw = localStorage.getItem(KEY);
     if (!raw) return;
-    const parsed = JSON.parse(raw) as { recitation?: number; cycles?: number };
+    const parsed = JSON.parse(raw) as { recitation?: number; cycles?: number; memory?: string[] };
     recitation = Math.min(CYCLE, Math.max(1, parsed.recitation ?? 1));
     cycles = Math.max(0, parsed.cycles ?? 0);
+    memory = Array.isArray(parsed.memory) ? parsed.memory.filter((item) => typeof item === "string").slice(-24) : [];
+    evolvedFor = 0;
   } catch {
     recitation = 1;
     cycles = 0;
@@ -126,7 +188,7 @@ function load(): void {
 
 function save(): void {
   try {
-    localStorage.setItem(KEY, JSON.stringify({ recitation, cycles }));
+    localStorage.setItem(KEY, JSON.stringify({ recitation, cycles, memory }));
   } catch {
     /* private mode */
   }
@@ -139,45 +201,113 @@ function context(): AudioContext | null {
   return audioCtx;
 }
 
+function tune(hz: number): void {
+  if (!audioCtx) return;
+  const at = audioCtx.currentTime + 0.05;
+  for (const voice of choir) {
+    voice.osc.frequency.linearRampToValueAtTime(Math.max(40, hz * voice.ratio * voice.detune), at + 0.45);
+  }
+  murmur?.frequency.linearRampToValueAtTime(Math.max(90, hz), at + 0.45);
+}
+
 function startDrone(): void {
   const ctx = audioCtx;
   if (!ctx || master) return;
   master = ctx.createGain();
   analyser = ctx.createAnalyser();
-  analyser.fftSize = 64;
-  master.gain.value = 0.22;
+  analyser.fftSize = 8192;
+  analyser.smoothingTimeConstant = 0.82;
+  master.gain.value = 0.42;
   master.connect(analyser);
   analyser.connect(ctx.destination);
-  nodes = TONES.map((hz, index) => {
+  const seed = prayerAt(recitation).hz;
+  choir = Array.from({ length: CHOIR }, (_, index) => {
+    const ratio = index < 16 ? 0.5 : index < 40 ? 1 : 2;
+    const detune = 1 + ((index % 16) - 8) * 0.0035;
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
-    osc.type = index === 0 ? "sine" : "triangle";
-    osc.frequency.value = hz;
-    gain.gain.value = index === 0 ? 0.45 : 0.16;
+    osc.type = index % 7 === 0 ? "triangle" : "sine";
+    osc.frequency.value = seed * ratio * detune;
+    gain.gain.value = ratio === 1 ? 0.028 : 0.012;
     osc.connect(gain);
     gain.connect(master!);
     osc.start();
-    return osc;
+    nodes.push(osc);
+    return { osc, ratio, detune };
   });
+  const noiseBuffer = ctx.createBuffer(1, ctx.sampleRate, ctx.sampleRate);
+  const data = noiseBuffer.getChannelData(0);
+  for (let i = 0; i < data.length; i += 1) data[i] = Math.random() * 2 - 1;
+  const noise = ctx.createBufferSource();
+  noise.buffer = noiseBuffer;
+  noise.loop = true;
+  murmur = ctx.createBiquadFilter();
+  murmur.type = "bandpass";
+  murmur.frequency.value = seed;
+  murmur.Q.value = 0.6;
+  const noiseGain = ctx.createGain();
+  noiseGain.gain.value = 0.045;
+  noise.connect(murmur);
+  murmur.connect(noiseGain);
+  noiseGain.connect(master);
+  noise.start();
+  nodes.push(noise);
   const breath = ctx.createOscillator();
   const depth = ctx.createGain();
-  breath.frequency.value = 0.35;
-  depth.gain.value = 0.06;
+  breath.frequency.value = 0.18;
+  depth.gain.value = 0.08;
   breath.connect(depth);
   depth.connect(master.gain);
   breath.start();
   nodes.push(breath);
 }
 
+function ensureBins(): void {
+  if (!analyser) return;
+  if (timeBins.length !== analyser.fftSize) timeBins = new Uint8Array(analyser.fftSize);
+  if (freqBins.length !== analyser.frequencyBinCount) freqBins = new Uint8Array(analyser.frequencyBinCount);
+}
+
 export function readLevel(): number {
   if (!analyser) return 0;
-  analyser.getByteTimeDomainData(bins);
+  ensureBins();
+  analyser.getByteTimeDomainData(timeBins);
   let sum = 0;
-  for (const sample of bins) {
+  for (const sample of timeBins) {
     const v = (sample - 128) / 128;
     sum += v * v;
   }
-  return Math.min(1, Math.sqrt(sum / bins.length) * 5);
+  return Math.min(1, Math.sqrt(sum / timeBins.length) * 6);
+}
+
+export type Resonance = { hz: number; purity: number; carrier: number; voices: number; level: number };
+
+export function readResonance(): Resonance {
+  const carrier = prayerAt(recitation).hz;
+  if (!analyser || !audioCtx) return { hz: 0, purity: 0, carrier, voices: choir.length, level: 0 };
+  ensureBins();
+  analyser.getByteFrequencyData(freqBins);
+  let peak = 0;
+  let peakIndex = 1;
+  for (let i = 1; i < freqBins.length; i += 1) {
+    if (freqBins[i] > peak) {
+      peak = freqBins[i];
+      peakIndex = i;
+    }
+  }
+  const hz = Math.round((peakIndex * audioCtx.sampleRate) / analyser.fftSize);
+  return { hz, purity: peak / 255, carrier, voices: choir.length, level: readLevel() };
+}
+
+export function readSpectrum(target: Uint8Array): void {
+  if (!analyser) {
+    target.fill(0);
+    return;
+  }
+  ensureBins();
+  analyser.getByteFrequencyData(freqBins);
+  const step = Math.max(1, Math.floor(freqBins.length / target.length));
+  for (let i = 0; i < target.length; i += 1) target[i] = freqBins[Math.min(freqBins.length - 1, i * step)];
 }
 
 function sentences(text: string): string[] {
@@ -193,11 +323,11 @@ function speak(): void {
   if (!synth) return;
   sounding = true;
   const gen = ++generation;
-  const prayer = prayerAt(recitation);
+  const prayer = evolve(recitation);
+  tune(prayer.hz);
   const chunks = [
     `${prayer.tradition}. ${prayer.title}.`,
     ...sentences(prayer.text),
-    `This saying covers ${coveredName(recitation)}.`,
   ];
   let index = 0;
   const nextChunk = () => {
@@ -292,7 +422,8 @@ export function stillOffice(): void {
     }
   });
   nodes = [];
-  analyser?.disconnect();
+  choir = [];
+  murmur = null;
   analyser = null;
   master?.disconnect();
   master = null;

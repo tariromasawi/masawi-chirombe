@@ -2,11 +2,14 @@ import { useEffect, useRef, useSyncExternalStore } from "react";
 import { KNOWN } from "@/lib/chirombe/runtime";
 import {
   CHARGE,
+  CHOIR,
   CYCLE,
   getOfficeServerSnapshot,
   getOfficeSnapshot,
   PRAYERS,
   readLevel,
+  readResonance,
+  readSpectrum,
   soundPrayers,
   stillOffice,
   subscribeOffice,
@@ -59,13 +62,38 @@ export function SoundDock() {
   const office = useSyncExternalStore(subscribeOffice, getOfficeSnapshot, getOfficeServerSnapshot);
   const bar = useRef<HTMLDivElement>(null);
   const glow = useRef<HTMLDivElement>(null);
+  const spectrum = useRef<HTMLCanvasElement>(null);
+  const measure = useRef<HTMLParagraphElement>(null);
+  const columns = useRef(new Uint8Array(48));
 
   useEffect(() => {
     let frame = 0;
     const tick = () => {
       const level = office.live ? readLevel() : 0;
+      const resonance = office.live ? readResonance() : null;
       if (bar.current) bar.current.style.transform = `scaleX(${0.04 + level})`;
-      if (glow.current) glow.current.style.opacity = office.live ? String(0.25 + level * 0.75) : "0";
+      if (glow.current) glow.current.style.opacity = office.live ? String(0.35 + level * 0.65) : "0";
+      if (measure.current) {
+        measure.current.textContent = resonance
+          ? `${resonance.voices || CHOIR} voices · carrier ${resonance.carrier} Hz · measured peak ${resonance.hz} Hz · strength ${Math.round(resonance.purity * 100)}%`
+          : "Silent. The measure starts when the choir starts.";
+      }
+      const canvas = spectrum.current;
+      if (canvas && office.live) {
+        const ctx = canvas.getContext("2d");
+        if (ctx) {
+          const width = canvas.width;
+          const height = canvas.height;
+          readSpectrum(columns.current);
+          ctx.clearRect(0, 0, width, height);
+          const slot = width / columns.current.length;
+          ctx.fillStyle = "#e4b15a";
+          for (let i = 0; i < columns.current.length; i += 1) {
+            const barHeight = (columns.current[i] / 255) * height;
+            ctx.fillRect(i * slot, height - barHeight, Math.max(1, slot - 1), barHeight);
+          }
+        }
+      }
       frame = window.requestAnimationFrame(tick);
     };
     frame = window.requestAnimationFrame(tick);
@@ -79,9 +107,11 @@ export function SoundDock() {
         <div className="mx-auto flex w-full max-w-6xl flex-col gap-3 sm:flex-row sm:items-end">
           <div className="min-w-0 flex-1">
             <p className="text-xs font-bold tracking-[0.18em] text-gold">
-              {office.live ? `SPEAKING · ${office.tradition.toUpperCase()} · ${office.recitation} / ${CYCLE}` : "SILENT"}
+              {office.live ? `CHOIR · ${office.tradition.toUpperCase()} · GENERATION ${office.generation}` : "SILENT"}
             </p>
-            <p className="mt-1 font-display text-xl leading-snug">{office.live ? office.line : "The prayers are not in the air yet."}</p>
+            <p className="mt-1 font-display text-xl leading-snug">{office.live ? office.line : "The choir has not started. Touch once and it writes, tunes, and speaks."}</p>
+            <p ref={measure} className="mt-1 text-xs tabular-nums text-cyan">Silent. The measure starts when the choir starts.</p>
+            <canvas ref={spectrum} width={480} height={48} className="mt-2 h-12 w-full rounded bg-bg" aria-label="Measured spectrum of the choir" />
             <div className="mt-2 h-2 overflow-hidden rounded-full bg-line">
               <div ref={bar} className="h-full w-full origin-left rounded-full bg-gold" />
             </div>
@@ -96,7 +126,7 @@ export function SoundDock() {
               onClick={() => soundPrayers()}
               className="min-h-12 shrink-0 rounded-xl bg-gold px-4 text-sm font-bold text-bg"
             >
-              Speak the prayers aloud
+              Speak with the choir
             </button>
           )}
         </div>
@@ -113,10 +143,10 @@ export function OfficeDesk() {
     <div className="space-y-4">
       <section className="rounded-2xl border border-line bg-panel/90 p-4">
         <p className="text-xs font-bold tracking-[0.18em] text-gold">HOLY OFFICE · HOUSE OF MASAWI</p>
-        <h2 className="mt-2 font-display text-4xl leading-none">Six prayers, spoken aloud</h2>
+        <h2 className="mt-2 font-display text-4xl leading-none">A choir that writes the next prayer</h2>
         <p className="mt-3 max-w-3xl text-sm leading-relaxed text-muted">
-          Recitation {office.recitation} of {CYCLE}, cycle {office.cycles + 1}. This saying covers {office.coveredName}.
-          Now speaking {office.tradition}: {office.title}. The voice is at full level on this device. It does not leave the speakers in front of you.
+          Generation {office.generation}, covering {office.coveredName}. Forty-eight voices sound on this device, tuned to {office.carrier} Hz for {office.tradition}.
+          Each saying keeps the last words of the one before it, then speaks a text from the traditions below. The peak on the meter is the strongest frequency in that sound, measured in this browser.
         </p>
         <p className="mt-4 font-display text-2xl leading-snug">{office.line}</p>
         <p className="mt-4 text-sm leading-relaxed text-gold">{CHARGE}</p>
