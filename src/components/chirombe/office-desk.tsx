@@ -107,28 +107,33 @@ export function SoundDock() {
         <div className="mx-auto flex w-full max-w-6xl flex-col gap-3 sm:flex-row sm:items-end">
           <div className="min-w-0 flex-1">
             <p className="text-xs font-bold tracking-[0.18em] text-gold">
-              {office.live ? `CHOIR · ${office.tradition.toUpperCase()} · GENERATION ${office.generation}` : "SILENT"}
+              {office.voice === "reading" ? "READING ALOUD" : office.voice === "blocked" ? "VOICE BLOCKED" : "VOICE WAITING"}
+              {office.live ? ` · CHOIR · ${office.tradition.toUpperCase()} · GENERATION ${office.generation}` : ""}
             </p>
-            <p className="mt-1 font-display text-xl leading-snug">{office.live ? office.line : "The choir has not started. Touch once and it writes, tunes, and speaks."}</p>
+            <p className="mt-1 font-display text-xl leading-snug">{office.line}</p>
+            <p className="mt-1 text-sm text-gold">{office.hearing ? `Now reading: ${office.hearing}` : "The voice reads this text after you allow it."}</p>
             <p ref={measure} className="mt-1 text-xs tabular-nums text-cyan">Silent. The measure starts when the choir starts.</p>
             <canvas ref={spectrum} width={480} height={48} className="mt-2 h-12 w-full rounded bg-bg" aria-label="Measured spectrum of the choir" />
             <div className="mt-2 h-2 overflow-hidden rounded-full bg-line">
               <div ref={bar} className="h-full w-full origin-left rounded-full bg-gold" />
             </div>
           </div>
-          {office.live ? (
-            <button type="button" onClick={() => stillOffice()} className="min-h-12 shrink-0 rounded-xl border border-line px-4 text-sm font-semibold">
-              Still the voice
-            </button>
-          ) : (
-            <button
-              type="button"
-              onClick={() => soundPrayers()}
-              className="min-h-12 shrink-0 rounded-xl bg-gold px-4 text-sm font-bold text-bg"
-            >
-              Speak with the choir
-            </button>
-          )}
+          <div className="flex shrink-0 flex-col gap-2">
+            {office.voice !== "reading" ? (
+              <button
+                type="button"
+                onClick={() => soundPrayers()}
+                className="min-h-12 rounded-xl bg-gold px-4 text-sm font-bold text-bg"
+              >
+                Allow the voice to read this page
+              </button>
+            ) : null}
+            {office.live ? (
+              <button type="button" onClick={() => stillOffice()} className="min-h-12 rounded-xl border border-line px-4 text-sm font-semibold">
+                Still the voice
+              </button>
+            ) : null}
+          </div>
         </div>
       </div>
     </>

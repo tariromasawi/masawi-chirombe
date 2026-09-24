@@ -74,6 +74,8 @@ export type OfficeState = {
   generation: number;
   carrier: number;
   voices: number;
+  voice: "silent" | "reading" | "blocked";
+  hearing: string;
 };
 
 const KEY = "chirombe.office.v2";
@@ -98,6 +100,9 @@ let booted = false;
 let fallback = 0;
 let generation = 0;
 let sounding = false;
+let voice: OfficeState["voice"] = "silent";
+let hearing = "";
+let throb = 0;
 type ChoirVoice = { osc: OscillatorNode; ratio: number; detune: number };
 let choir: ChoirVoice[] = [];
 let murmur: BiquadFilterNode | null = null;
@@ -117,6 +122,8 @@ const EMPTY: OfficeState = {
   generation: 1,
   carrier: PRAYERS[0].hz,
   voices: CHOIR,
+  voice: "silent",
+  hearing: "",
 };
 
 let snapshot: OfficeState = EMPTY;
@@ -163,6 +170,8 @@ function project(): OfficeState {
     generation: writtenGeneration,
     carrier: prayer.hz,
     voices: choir.length || CHOIR,
+    voice,
+    hearing,
   };
 }
 
@@ -260,6 +269,24 @@ function startDrone(): void {
   depth.connect(master.gain);
   breath.start();
   nodes.push(breath);
+  const sub = ctx.createOscillator();
+  const subGain = ctx.createGain();
+  sub.type = "sine";
+  sub.frequency.value = 46;
+  subGain.gain.value = 0.22;
+  sub.connect(subGain);
+  subGain.connect(master);
+  sub.start();
+  nodes.push(sub);
+  const beat = ctx.createOscillator();
+  const beatGain = ctx.createGain();
+  beat.type = "sine";
+  beat.frequency.value = 58;
+  beatGain.gain.value = 0.12;
+  beat.connect(beatGain);
+  beatGain.connect(master);
+  beat.start();
+  nodes.push(beat);
 }
 
 function ensureBins(): void {
@@ -317,50 +344,82 @@ function sentences(text: string): string[] {
     .filter(Boolean);
 }
 
+function feel(): void {
+  navigator.vibrate?.([40, 90, 24]);
+  window.clearInterval(throb);
+  throb = window.setInterval(() => {
+    if (wanted) navigator.vibrate?.([28, 140, 18]);
+  }, 1500);
+}
+
+function duck(speakingNow: boolean): void {
+  if (!master || !audioCtx) return;
+  const at = audioCtx.currentTime;
+  master.gain.cancelScheduledValues(at);
+  master.gain.linearRampToValueAtTime(speakingNow ? 0.2 : 0.42, at + 0.12);
+}
+
 function speak(): void {
   if (!wanted || sounding) return;
   const synth = window.speechSynthesis;
-  if (!synth) return;
+  if (!synth) {
+    voice = "blocked";
+    emit();
+    return;
+  }
   sounding = true;
   const gen = ++generation;
   const prayer = evolve(recitation);
   tune(prayer.hz);
-  const chunks = [
-    `${prayer.tradition}. ${prayer.title}.`,
-    ...sentences(prayer.text),
-  ];
+  const chunks = [`${prayer.tradition}. ${prayer.title}.`, ...sentences(prayer.text)];
   let index = 0;
   const nextChunk = () => {
     if (!wanted || gen !== generation) return;
     if (index >= chunks.length) {
       sounding = false;
+      duck(false);
       advance();
       return;
     }
-    const utterance = new SpeechSynthesisUtterance(chunks[index]);
+    const text = chunks[index];
     index += 1;
-    utterance.rate = 0.9;
+    hearing = text;
+    voice = "reading";
+    spoken = true;
+    emit();
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.rate = 0.86;
     utterance.pitch = 1;
     utterance.volume = 1;
-    const voice = synth.getVoices().find((item) => /^en/i.test(item.lang));
-    if (voice) utterance.voice = voice;
+    const english = synth.getVoices().find((item) => /^en/i.test(item.lang));
+    if (english) utterance.voice = english;
+    utterance.onstart = () => {
+      if (gen !== generation) return;
+      voice = "reading";
+      duck(true);
+      emit();
+    };
     utterance.onend = () => nextChunk();
     utterance.onerror = (event) => {
       if (gen !== generation) return;
-      if (event.error === "not-allowed" || event.error === "interrupted" || event.error === "canceled") {
+      if (event.error === "not-allowed") {
         sounding = false;
         spoken = false;
+        voice = "blocked";
+        duck(false);
         emit();
         return;
       }
+      if (event.error === "interrupted" || event.error === "canceled") {
+        sounding = false;
+        return;
+      }
       window.clearTimeout(fallback);
-      fallback = window.setTimeout(nextChunk, 1200);
+      fallback = window.setTimeout(nextChunk, 700);
     };
+    duck(true);
     synth.speak(utterance);
-    spoken = true;
-    emit();
   };
-  synth.cancel();
   nextChunk();
 }
 
@@ -390,10 +449,11 @@ export function soundPrayers(): void {
   wanted = true;
   const ctx = context();
   if (ctx && ctx.state === "suspended") void ctx.resume();
-  startDrone();
-  live = true;
   const synth = window.speechSynthesis;
   if (synth && !synth.speaking && !sounding) speak();
+  startDrone();
+  live = true;
+  feel();
   keepAlive();
   emit();
 }
@@ -413,6 +473,9 @@ export function stillOffice(): void {
   pulse = 0;
   keeper = 0;
   window.clearTimeout(fallback);
+  window.clearInterval(throb);
+  throb = 0;
+  navigator.vibrate?.(0);
   window.speechSynthesis?.cancel();
   nodes.forEach((node) => {
     try {
@@ -428,6 +491,8 @@ export function stillOffice(): void {
   master?.disconnect();
   master = null;
   spoken = false;
+  voice = "silent";
+  hearing = "";
   emit();
 }
 
