@@ -1,4 +1,4 @@
-import { useEffect, useRef, useSyncExternalStore } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { KNOWN } from "@/lib/chirombe/runtime";
 import {
   CHARGE,
@@ -60,8 +60,8 @@ function Seal({ name, role, count }: { name: string; role: string; count: number
 
 export function SoundDock() {
   const office = useSyncExternalStore(subscribeOffice, getOfficeSnapshot, getOfficeServerSnapshot);
+  const [open, setOpen] = useState(false);
   const bar = useRef<HTMLDivElement>(null);
-  const glow = useRef<HTMLDivElement>(null);
   const spectrum = useRef<HTMLCanvasElement>(null);
   const measure = useRef<HTMLParagraphElement>(null);
   const columns = useRef(new Uint8Array(48));
@@ -72,11 +72,10 @@ export function SoundDock() {
       const level = office.live ? readLevel() : 0;
       const resonance = office.live ? readResonance() : null;
       if (bar.current) bar.current.style.transform = `scaleX(${0.04 + level})`;
-      if (glow.current) glow.current.style.opacity = office.live ? String(0.35 + level * 0.65) : "0";
       if (measure.current) {
         measure.current.textContent = resonance
           ? `${resonance.voices || CHOIR} voices · carrier ${resonance.carrier} Hz · measured peak ${resonance.hz} Hz · strength ${Math.round(resonance.purity * 100)}%`
-          : "Silent. The measure starts when the choir starts.";
+          : "The measure starts when the choir starts.";
       }
       const canvas = spectrum.current;
       if (canvas && office.live) {
@@ -101,42 +100,48 @@ export function SoundDock() {
   }, [office.live]);
 
   return (
-    <>
-      <div ref={glow} className="pointer-events-none fixed inset-0 z-30 shadow-[inset_0_0_80px_rgba(228,177,90,0.85)]" />
-      <div className="fixed inset-x-0 bottom-0 z-40 border-t border-gold/40 bg-bg/95 px-4 py-3 backdrop-blur-xl">
-        <div className="mx-auto flex w-full max-w-6xl flex-col gap-3 sm:flex-row sm:items-end">
-          <div className="min-w-0 flex-1">
-            <p className="text-xs font-bold tracking-[0.18em] text-gold">
-              {office.voice === "reading" ? "READING ALOUD" : office.voice === "blocked" ? "VOICE BLOCKED" : "VOICE WAITING"}
-              {office.live ? ` · CHOIR · ${office.tradition.toUpperCase()} · GENERATION ${office.generation}` : ""}
-            </p>
-            <p className="mt-1 font-display text-xl leading-snug">{office.line}</p>
-            <p className="mt-1 text-sm text-gold">{office.hearing ? `Now reading: ${office.hearing}` : "The voice reads this text after you allow it."}</p>
-            <p ref={measure} className="mt-1 text-xs tabular-nums text-cyan">Silent. The measure starts when the choir starts.</p>
-            <canvas ref={spectrum} width={480} height={48} className="mt-2 h-12 w-full rounded bg-bg" aria-label="Measured spectrum of the choir" />
-            <div className="mt-2 h-2 overflow-hidden rounded-full bg-line">
-              <div ref={bar} className="h-full w-full origin-left rounded-full bg-gold" />
-            </div>
-          </div>
-          <div className="flex shrink-0 flex-col gap-2">
-            {office.voice !== "reading" ? (
-              <button
-                type="button"
-                onClick={() => soundPrayers()}
-                className="min-h-12 rounded-xl bg-gold px-4 text-sm font-bold text-bg"
-              >
-                Allow the voice to read this page
-              </button>
-            ) : null}
-            {office.live ? (
-              <button type="button" onClick={() => stillOffice()} className="min-h-12 rounded-xl border border-line px-4 text-sm font-semibold">
-                Still the voice
-              </button>
-            ) : null}
-          </div>
+    <div className="fixed inset-x-0 bottom-0 z-40 border-t border-gold/40 bg-bg/90 px-3 py-2 backdrop-blur-md">
+      <div className="mx-auto flex w-full max-w-6xl items-center gap-2">
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-xs font-bold tracking-[0.14em] text-gold">
+            {office.voice === "reading" ? "READING ALOUD" : office.voice === "blocked" ? "VOICE BLOCKED" : "VOICE WAITING"}
+            {office.live ? ` · ${office.tradition.toUpperCase()} · GENERATION ${office.generation}` : ""}
+          </p>
+          <p className="truncate text-sm">{office.hearing || "Allow the voice, then this line is read aloud."}</p>
         </div>
+        <button
+          type="button"
+          onClick={() => setOpen((value) => !value)}
+          className="min-h-10 shrink-0 rounded-lg border border-line px-2 text-xs font-semibold"
+        >
+          {open ? "Hide text" : "Prayer text"}
+        </button>
+        {office.voice !== "reading" ? (
+          <button
+            type="button"
+            onClick={() => soundPrayers()}
+            className="min-h-10 shrink-0 rounded-lg bg-gold px-2 text-xs font-bold text-bg"
+          >
+            Allow voice
+          </button>
+        ) : null}
+        {office.live ? (
+          <button type="button" onClick={() => stillOffice()} className="min-h-10 shrink-0 rounded-lg border border-line px-2 text-xs font-semibold">
+            Still
+          </button>
+        ) : null}
       </div>
-    </>
+      {open ? (
+        <p className="mx-auto mt-2 max-h-28 w-full max-w-6xl overflow-y-auto text-sm leading-relaxed text-muted">{office.line}</p>
+      ) : null}
+      <div className="mx-auto mt-1 w-full max-w-6xl">
+        <canvas ref={spectrum} width={480} height={28} className="h-7 w-full rounded bg-bg/80" aria-label="Measured spectrum of the choir" />
+        <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-line">
+          <div ref={bar} className="h-full w-full origin-left rounded-full bg-gold" />
+        </div>
+        <p ref={measure} className="truncate text-[11px] tabular-nums text-cyan">The measure starts when the choir starts.</p>
+      </div>
+    </div>
   );
 }
 
@@ -153,7 +158,7 @@ export function OfficeDesk() {
           Generation {office.generation}, covering {office.coveredName}. Forty-eight voices sound on this device, tuned to {office.carrier} Hz for {office.tradition}.
           Each saying keeps the last words of the one before it, then speaks a text from the traditions below. The peak on the meter is the strongest frequency in that sound, measured in this browser.
         </p>
-        <p className="mt-4 font-display text-2xl leading-snug">{office.line}</p>
+        <p className="mt-4 max-h-36 overflow-y-auto font-display text-lg leading-snug">{office.line}</p>
         <p className="mt-4 text-sm leading-relaxed text-gold">{CHARGE}</p>
         <p className="mt-3 text-xs text-muted">Luke 10:19, spoken as the charge of this house. The seal is the prayer. It does not replace a lock, a doctor, or the law.</p>
         <div className="mt-4 flex flex-wrap gap-2">

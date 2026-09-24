@@ -226,7 +226,7 @@ function startDrone(): void {
   analyser = ctx.createAnalyser();
   analyser.fftSize = 8192;
   analyser.smoothingTimeConstant = 0.82;
-  master.gain.value = 0.42;
+  master.gain.value = 0.5;
   master.connect(analyser);
   analyser.connect(ctx.destination);
   const seed = prayerAt(recitation).hz;
@@ -273,7 +273,7 @@ function startDrone(): void {
   const subGain = ctx.createGain();
   sub.type = "sine";
   sub.frequency.value = 46;
-  subGain.gain.value = 0.22;
+  subGain.gain.value = 0.3;
   sub.connect(subGain);
   subGain.connect(master);
   sub.start();
@@ -356,7 +356,7 @@ function duck(speakingNow: boolean): void {
   if (!master || !audioCtx) return;
   const at = audioCtx.currentTime;
   master.gain.cancelScheduledValues(at);
-  master.gain.linearRampToValueAtTime(speakingNow ? 0.2 : 0.42, at + 0.12);
+  master.gain.linearRampToValueAtTime(speakingNow ? 0.26 : 0.5, at + 0.12);
 }
 
 function speak(): void {

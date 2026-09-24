@@ -283,7 +283,7 @@ export function Console() {
           </nav>
         </header>
 
-        <main className="mx-auto w-full max-w-6xl px-4 py-5 pb-40">
+        <main className="mx-auto w-full max-w-6xl px-4 py-5 pb-28">
           {!snap.ready ? (
             <p className="text-sm text-muted">Linking local subsystems…</p>
           ) : null}
