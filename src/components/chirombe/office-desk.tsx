@@ -1,12 +1,13 @@
-import { useSyncExternalStore } from "react";
+import { useEffect, useRef, useSyncExternalStore } from "react";
 import { KNOWN } from "@/lib/chirombe/runtime";
 import {
   CHARGE,
   CYCLE,
   getOfficeServerSnapshot,
   getOfficeSnapshot,
-  LORDS_PRAYER,
-  openOffice,
+  PRAYERS,
+  readLevel,
+  soundPrayers,
   stillOffice,
   subscribeOffice,
 } from "@/lib/chirombe/office";
@@ -54,6 +55,56 @@ function Seal({ name, role, count }: { name: string; role: string; count: number
   );
 }
 
+export function SoundDock() {
+  const office = useSyncExternalStore(subscribeOffice, getOfficeSnapshot, getOfficeServerSnapshot);
+  const bar = useRef<HTMLDivElement>(null);
+  const glow = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    let frame = 0;
+    const tick = () => {
+      const level = office.live ? readLevel() : 0;
+      if (bar.current) bar.current.style.transform = `scaleX(${0.04 + level})`;
+      if (glow.current) glow.current.style.opacity = office.live ? String(0.25 + level * 0.75) : "0";
+      frame = window.requestAnimationFrame(tick);
+    };
+    frame = window.requestAnimationFrame(tick);
+    return () => window.cancelAnimationFrame(frame);
+  }, [office.live]);
+
+  return (
+    <>
+      <div ref={glow} className="pointer-events-none fixed inset-0 z-30 shadow-[inset_0_0_80px_rgba(228,177,90,0.85)]" />
+      <div className="fixed inset-x-0 bottom-0 z-40 border-t border-gold/40 bg-bg/95 px-4 py-3 backdrop-blur-xl">
+        <div className="mx-auto flex w-full max-w-6xl flex-col gap-3 sm:flex-row sm:items-end">
+          <div className="min-w-0 flex-1">
+            <p className="text-xs font-bold tracking-[0.18em] text-gold">
+              {office.live ? `SPEAKING · ${office.tradition.toUpperCase()} · ${office.recitation} / ${CYCLE}` : "SILENT"}
+            </p>
+            <p className="mt-1 font-display text-xl leading-snug">{office.live ? office.line : "The prayers are not in the air yet."}</p>
+            <div className="mt-2 h-2 overflow-hidden rounded-full bg-line">
+              <div ref={bar} className="h-full w-full origin-left rounded-full bg-gold" />
+            </div>
+          </div>
+          {office.live ? (
+            <button type="button" onClick={() => stillOffice()} className="min-h-12 shrink-0 rounded-xl border border-line px-4 text-sm font-semibold">
+              Still the voice
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => soundPrayers()}
+              className="min-h-12 shrink-0 rounded-xl bg-gold px-4 text-sm font-bold text-bg"
+            >
+              Speak the prayers aloud
+            </button>
+          )}
+        </div>
+      </div>
+    </>
+  );
+}
+
 export function OfficeDesk() {
   const office = useSyncExternalStore(subscribeOffice, getOfficeSnapshot, getOfficeServerSnapshot);
   const active = KNOWN[(Math.max(1, office.recitation) - 1) % KNOWN.length];
@@ -62,19 +113,18 @@ export function OfficeDesk() {
     <div className="space-y-4">
       <section className="rounded-2xl border border-line bg-panel/90 p-4">
         <p className="text-xs font-bold tracking-[0.18em] text-gold">HOLY OFFICE · HOUSE OF MASAWI</p>
-        <h2 className="mt-2 font-display text-4xl leading-none">The Lord’s Prayer, twelve hundred times</h2>
+        <h2 className="mt-2 font-display text-4xl leading-none">Six prayers, spoken aloud</h2>
         <p className="mt-3 max-w-3xl text-sm leading-relaxed text-muted">
           Recitation {office.recitation} of {CYCLE}, cycle {office.cycles + 1}. This saying covers {office.coveredName}.
-          When twelve hundred are finished, the office begins again. It keeps that watch while this page is open.
-          A trillion sayings cannot be finished by any voice, human or machine. The watch that can be kept is this one, repeated.
+          Now speaking {office.tradition}: {office.title}. The voice is at full level on this device. It does not leave the speakers in front of you.
         </p>
-        <p className="mt-4 font-display text-2xl leading-snug">{LORDS_PRAYER}</p>
+        <p className="mt-4 font-display text-2xl leading-snug">{office.line}</p>
         <p className="mt-4 text-sm leading-relaxed text-gold">{CHARGE}</p>
         <p className="mt-3 text-xs text-muted">Luke 10:19, spoken as the charge of this house. The seal is the prayer. It does not replace a lock, a doctor, or the law.</p>
         <div className="mt-4 flex flex-wrap gap-2">
           <button
             type="button"
-            onClick={() => void openOffice()}
+            onClick={() => soundPrayers()}
             className="min-h-11 rounded-xl border border-gold/50 px-3 text-xs font-semibold text-gold"
           >
             {office.live ? "Office is sounding" : "Open the office"}
@@ -88,8 +138,7 @@ export function OfficeDesk() {
           </button>
         </div>
         <p className="mt-3 text-xs text-muted">
-          Tone {office.live ? "holding 174 · 285 · 432 · 528 · 639 Hz" : "waiting for a tap, because a browser will not sound itself"}
-          {office.spoken ? " · voice is in the room" : ""}
+          {PRAYERS.map((prayer) => prayer.tradition).join(" · ")}
         </p>
       </section>
       <Seal name={active.name} role={active.role} count={office.recitation} />

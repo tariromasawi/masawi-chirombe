@@ -8,6 +8,33 @@ export const LORDS_PRAYER =
 export const CHARGE =
   "Behold, I give unto you power to tread on serpents and scorpions, and over all the power of the enemy: and nothing shall by any means hurt you.";
 
+export type Prayer = { tradition: string; title: string; text: string };
+
+export const PRAYERS: Prayer[] = [
+  { tradition: "Christian", title: "The Lord’s Prayer", text: LORDS_PRAYER },
+  {
+    tradition: "Jewish",
+    title: "The Shema",
+    text: "Hear, O Israel: the Lord our God, the Lord is one. You shall love the Lord your God with all your heart, and with all your soul, and with all your might.",
+  },
+  {
+    tradition: "Muslim",
+    title: "The Opening, spoken in English",
+    text: "In the name of God, the Most Merciful, the Especially Merciful. Praise belongs to God, Lord of the worlds. The Most Merciful, the Especially Merciful, Master of the Day of Judgment. You alone we worship, and you alone we ask for help. Guide us on the straight path.",
+  },
+  {
+    tradition: "Buddhist",
+    title: "Loving-kindness",
+    text: "May all beings be safe. May all beings be well. May all beings be at ease. May this house be held in kindness.",
+  },
+  {
+    tradition: "Hindu",
+    title: "The peace leading",
+    text: "Lead us from the unreal to the real. Lead us from darkness to light. Lead us from death to immortality. Peace. Peace. Peace.",
+  },
+  { tradition: "The house", title: "The charge", text: CHARGE },
+];
+
 export type OfficeState = {
   wanted: boolean;
   live: boolean;
@@ -15,10 +42,13 @@ export type OfficeState = {
   cycles: number;
   coveredName: string;
   spoken: boolean;
+  tradition: string;
+  title: string;
+  line: string;
 };
 
 const KEY = "chirombe.office.v1";
-const TONES = [174, 285, 432, 528, 639];
+const TONES = [108, 174, 285, 432, 528];
 
 const listeners = new Set<() => void>();
 let wanted = true;
@@ -28,12 +58,16 @@ let cycles = 0;
 let spoken = false;
 let audioCtx: AudioContext | null = null;
 let master: GainNode | null = null;
+let analyser: AnalyserNode | null = null;
 let nodes: OscillatorNode[] = [];
 let pulse = 0;
-let utterance: SpeechSynthesisUtterance | null = null;
+let keeper = 0;
 let opening: Promise<boolean> | null = null;
 let booted = false;
 let fallback = 0;
+let generation = 0;
+let sounding = false;
+const bins = new Uint8Array(64);
 
 const EMPTY: OfficeState = {
   wanted: true,
@@ -42,6 +76,9 @@ const EMPTY: OfficeState = {
   cycles: 0,
   coveredName: KNOWN[0].name,
   spoken: false,
+  tradition: PRAYERS[0].tradition,
+  title: PRAYERS[0].title,
+  line: PRAYERS[0].text,
 };
 
 let snapshot: OfficeState = EMPTY;
@@ -50,7 +87,12 @@ function coveredName(n: number): string {
   return KNOWN[(Math.max(1, n) - 1) % KNOWN.length].name;
 }
 
+function prayerAt(n: number): Prayer {
+  return PRAYERS[(Math.max(1, n) - 1) % PRAYERS.length];
+}
+
 function project(): OfficeState {
+  const prayer = prayerAt(recitation);
   return {
     wanted,
     live,
@@ -58,6 +100,9 @@ function project(): OfficeState {
     cycles,
     coveredName: coveredName(recitation),
     spoken,
+    tradition: prayer.tradition,
+    title: prayer.title,
+    line: prayer.text,
   };
 }
 
@@ -87,6 +132,108 @@ function save(): void {
   }
 }
 
+function context(): AudioContext | null {
+  const Ctx = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+  if (!Ctx) return null;
+  audioCtx = audioCtx ?? new Ctx();
+  return audioCtx;
+}
+
+function startDrone(): void {
+  const ctx = audioCtx;
+  if (!ctx || master) return;
+  master = ctx.createGain();
+  analyser = ctx.createAnalyser();
+  analyser.fftSize = 64;
+  master.gain.value = 0.22;
+  master.connect(analyser);
+  analyser.connect(ctx.destination);
+  nodes = TONES.map((hz, index) => {
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = index === 0 ? "sine" : "triangle";
+    osc.frequency.value = hz;
+    gain.gain.value = index === 0 ? 0.45 : 0.16;
+    osc.connect(gain);
+    gain.connect(master!);
+    osc.start();
+    return osc;
+  });
+  const breath = ctx.createOscillator();
+  const depth = ctx.createGain();
+  breath.frequency.value = 0.35;
+  depth.gain.value = 0.06;
+  breath.connect(depth);
+  depth.connect(master.gain);
+  breath.start();
+  nodes.push(breath);
+}
+
+export function readLevel(): number {
+  if (!analyser) return 0;
+  analyser.getByteTimeDomainData(bins);
+  let sum = 0;
+  for (const sample of bins) {
+    const v = (sample - 128) / 128;
+    sum += v * v;
+  }
+  return Math.min(1, Math.sqrt(sum / bins.length) * 5);
+}
+
+function sentences(text: string): string[] {
+  return text
+    .split(/(?<=[.?!])\s+/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
+function speak(): void {
+  if (!wanted || sounding) return;
+  const synth = window.speechSynthesis;
+  if (!synth) return;
+  sounding = true;
+  const gen = ++generation;
+  const prayer = prayerAt(recitation);
+  const chunks = [
+    `${prayer.tradition}. ${prayer.title}.`,
+    ...sentences(prayer.text),
+    `This saying covers ${coveredName(recitation)}.`,
+  ];
+  let index = 0;
+  const nextChunk = () => {
+    if (!wanted || gen !== generation) return;
+    if (index >= chunks.length) {
+      sounding = false;
+      advance();
+      return;
+    }
+    const utterance = new SpeechSynthesisUtterance(chunks[index]);
+    index += 1;
+    utterance.rate = 0.9;
+    utterance.pitch = 1;
+    utterance.volume = 1;
+    const voice = synth.getVoices().find((item) => /^en/i.test(item.lang));
+    if (voice) utterance.voice = voice;
+    utterance.onend = () => nextChunk();
+    utterance.onerror = (event) => {
+      if (gen !== generation) return;
+      if (event.error === "not-allowed" || event.error === "interrupted" || event.error === "canceled") {
+        sounding = false;
+        spoken = false;
+        emit();
+        return;
+      }
+      window.clearTimeout(fallback);
+      fallback = window.setTimeout(nextChunk, 1200);
+    };
+    synth.speak(utterance);
+    spoken = true;
+    emit();
+  };
+  synth.cancel();
+  nextChunk();
+}
+
 function advance(): void {
   if (recitation >= CYCLE) {
     recitation = 1;
@@ -99,86 +246,44 @@ function advance(): void {
   if (wanted) speak();
 }
 
-function speak(): void {
-  if (!wanted) return;
+function keepAlive(): void {
+  window.clearInterval(keeper);
+  keeper = window.setInterval(() => {
+    const synth = window.speechSynthesis;
+    if (!wanted || !synth) return;
+    if (synth.speaking || synth.paused) synth.resume();
+    else if (live && !sounding) speak();
+  }, 4000);
+}
+
+export function soundPrayers(): void {
+  wanted = true;
+  const ctx = context();
+  if (ctx && ctx.state === "suspended") void ctx.resume();
+  startDrone();
+  live = true;
   const synth = window.speechSynthesis;
-  if (!synth) {
-    spoken = false;
-    window.clearTimeout(fallback);
-    fallback = window.setTimeout(advance, 18000);
-    emit();
-    return;
-  }
-  synth.cancel();
-  const next = new SpeechSynthesisUtterance(`${LORDS_PRAYER} This recitation covers ${coveredName(recitation)}.`);
-  next.rate = 0.92;
-  next.pitch = 1;
-  next.volume = 1;
-  next.onend = () => {
-    spoken = true;
-    advance();
-  };
-  next.onerror = () => {
-    spoken = false;
-    window.clearTimeout(fallback);
-    fallback = window.setTimeout(advance, 18000);
-  };
-  utterance = next;
-  spoken = true;
-  synth.speak(next);
+  if (synth && !synth.speaking && !sounding) speak();
+  keepAlive();
   emit();
 }
 
-async function ensureAudio(): Promise<boolean> {
-  const Ctx = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-  if (!Ctx) return false;
-  audioCtx = audioCtx ?? new Ctx();
-  if (audioCtx.state === "suspended") {
-    try {
-      await audioCtx.resume();
-    } catch {
-      return false;
-    }
-  }
-  return audioCtx.state === "running";
+export async function openOffice(): Promise<boolean> {
+  soundPrayers();
+  return live;
 }
 
-function startDrone(): void {
-  if (!audioCtx || master) return;
-  master = audioCtx.createGain();
-  master.gain.value = 0.0001;
-  master.connect(audioCtx.destination);
-  const now = audioCtx.currentTime;
-  master.gain.exponentialRampToValueAtTime(0.035, now + 1.2);
-  nodes = TONES.map((hz, index) => {
-    const osc = audioCtx!.createOscillator();
-    const gain = audioCtx!.createGain();
-    osc.type = index % 2 === 0 ? "sine" : "triangle";
-    osc.frequency.value = hz;
-    gain.gain.value = index === 2 ? 0.55 : 0.18;
-    osc.connect(gain);
-    gain.connect(master!);
-    osc.start();
-    return osc;
-  });
+export function stillOffice(): void {
+  wanted = false;
+  live = false;
+  generation += 1;
+  sounding = false;
   window.clearInterval(pulse);
-  pulse = window.setInterval(() => {
-    if (!audioCtx || !master || !wanted) return;
-    const at = audioCtx.currentTime;
-    master.gain.cancelScheduledValues(at);
-    master.gain.setValueAtTime(Math.max(0.02, master.gain.value), at);
-    master.gain.linearRampToValueAtTime(0.045, at + 2.5);
-    master.gain.linearRampToValueAtTime(0.028, at + 5);
-  }, 5000);
-}
-
-function stopSound(): void {
-  window.clearInterval(pulse);
+  window.clearInterval(keeper);
   pulse = 0;
+  keeper = 0;
   window.clearTimeout(fallback);
-  fallback = 0;
   window.speechSynthesis?.cancel();
-  utterance = null;
   nodes.forEach((node) => {
     try {
       node.stop();
@@ -187,41 +292,11 @@ function stopSound(): void {
     }
   });
   nodes = [];
+  analyser?.disconnect();
+  analyser = null;
   master?.disconnect();
   master = null;
   spoken = false;
-}
-
-export async function openOffice(): Promise<boolean> {
-  if (live && wanted) return true;
-  if (opening) return opening;
-  opening = unlock().finally(() => {
-    opening = null;
-  });
-  return opening;
-}
-
-async function unlock(): Promise<boolean> {
-  wanted = true;
-  const unlocked = await ensureAudio();
-  if (!unlocked) {
-    live = false;
-    emit();
-    return false;
-  }
-  if (!live) {
-    live = true;
-    startDrone();
-    speak();
-  }
-  emit();
-  return true;
-}
-
-export function stillOffice(): void {
-  wanted = false;
-  live = false;
-  stopSound();
   emit();
 }
 
@@ -230,11 +305,17 @@ export function bootOffice(): void {
   booted = true;
   load();
   emit();
-  const unlockTap = () => {
-    if (wanted && !live) void openOffice();
-  };
-  window.addEventListener("pointerdown", unlockTap);
-  void openOffice();
+  window.addEventListener(
+    "pointerdown",
+    () => {
+      if (wanted) soundPrayers();
+    },
+    true,
+  );
+  window.speechSynthesis?.getVoices();
+  window.speechSynthesis?.addEventListener("voiceschanged", () => {
+    if (wanted && live && !window.speechSynthesis.speaking) speak();
+  });
 }
 
 export function subscribeOffice(listener: () => void): () => void {

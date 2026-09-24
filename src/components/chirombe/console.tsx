@@ -54,9 +54,9 @@ import {
 } from "@/lib/chirombe/runtime";
 import { MatrixCanvas, Starfield } from "@/components/chirombe/matrix-canvas";
 import { RiteDesk } from "@/components/chirombe/rite-desk";
-import { OfficeDesk } from "@/components/chirombe/office-desk";
+import { OfficeDesk, SoundDock } from "@/components/chirombe/office-desk";
 import { RitualRain } from "@/components/chirombe/ritual-rain";
-import { bootOffice, getOfficeServerSnapshot, getOfficeSnapshot, openOffice, stillOffice, subscribeOffice } from "@/lib/chirombe/office";
+import { bootOffice, getOfficeServerSnapshot, getOfficeSnapshot, soundPrayers, stillOffice, subscribeOffice } from "@/lib/chirombe/office";
 
 type View =
   | "command"
@@ -236,7 +236,7 @@ export function Console() {
                   {snap.paused ? "RESUME" : "PAUSE"}
                 </span>
               </Btn>
-              <Btn tone="gold" onClick={() => (office.live ? stillOffice() : void openOffice())}>
+              <Btn tone="gold" onClick={() => (office.live ? stillOffice() : soundPrayers())}>
                 <span className="inline-flex items-center gap-1.5">
                   <Volume2 className="h-3.5 w-3.5" aria-hidden="true" />
                   {office.live ? "STILL" : "OFFICE"}
@@ -283,7 +283,7 @@ export function Console() {
           </nav>
         </header>
 
-        <main className="mx-auto w-full max-w-6xl px-4 py-5 pb-16">
+        <main className="mx-auto w-full max-w-6xl px-4 py-5 pb-40">
           {!snap.ready ? (
             <p className="text-sm text-muted">Linking local subsystems…</p>
           ) : null}
@@ -779,9 +779,10 @@ export function Console() {
           </footer>
         </main>
       </div>
+      <SoundDock />
 
       {snap.toast ? (
-        <p className="pointer-events-none fixed bottom-4 left-1/2 z-30 -translate-x-1/2 rounded-full border border-cyan/40 bg-panel px-4 py-2 text-sm text-fg">
+        <p className="pointer-events-none fixed bottom-36 left-1/2 z-30 -translate-x-1/2 rounded-full border border-cyan/40 bg-panel px-4 py-2 text-sm text-fg">
           {snap.toast}
         </p>
       ) : null}
